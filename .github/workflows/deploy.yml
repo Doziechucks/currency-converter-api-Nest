@@ -3,7 +3,7 @@ name: Deploy to Server
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*.*.*'  # Trigger on tags like v1.0.0, v2.0.0, etc.
 
 jobs:
   deploy:
@@ -14,7 +14,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version
+      - name: Extract version from tag
         id: vars
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
@@ -35,30 +35,48 @@ jobs:
             CURRENT_DIR=/home/chiedozie/current
             TMP_DIR=/home/chiedozie/tmp_deploy_$VERSION
 
-            echo "Deploying v$VERSION"
+            echo "=========================================="
+            echo "Deploying version v$VERSION"
+            echo "=========================================="
 
+            # Clean and prepare temp directory
             rm -rf $TMP_DIR
             mkdir -p $TMP_DIR
 
-            rsync -a --delete \
-              --exclude='node_modules' \
-              --exclude='.git' \
-              --exclude='dist' \
-              ./ $TMP_DIR/
+            # Copy fresh code with retry and SSH keep-alive
+            echo "Copying source code..."
+            for i in {1..5}; do
+              rsync -a -e "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=6" --delete \
+                --exclude='node_modules' \
+                --exclude='.git' \
+                --exclude='dist' \
+                ./ $TMP_DIR/ && break || true
+              echo "Rsync attempt $i failed, retrying in 10s..."
+              sleep 10
+            done
 
+            # Replace old release atomically
             rm -rf $RELEASE_DIR
             mv $TMP_DIR $RELEASE_DIR
 
+            # Install, build, clean
             cd $RELEASE_DIR
-
+            echo "Installing dependencies..."
             npm ci
+
+            echo "Building application..."
             npm run build
+
+            echo "Pruning dev dependencies..."
             npm prune --production
 
+            # Update symlink
+            echo "Updating current symlink..."
             ln -sfn $RELEASE_DIR $CURRENT_DIR
 
+            # Reload or start using ecosystem config
             cd $CURRENT_DIR
-
+            echo "Reloading application with PM2..."
             if pm2 describe currency-converter > /dev/null 2>&1; then
               pm2 reload ecosystem.config.js --update-env
             else
@@ -67,11 +85,14 @@ jobs:
 
             pm2 save
 
+            # Wait and verify
             echo "Waiting for app to stabilize..."
-            sleep 8
+            sleep 10
 
             if pm2 describe currency-converter | grep -q "online"; then
+              echo "=========================================="
               echo "Deploy successful! v$VERSION is live"
+              echo "=========================================="
             else
               echo "Deploy failed - app not online"
               pm2 logs currency-converter --lines 50
