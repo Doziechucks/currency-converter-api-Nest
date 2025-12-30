@@ -3,8 +3,8 @@ name: Deploy to Server
 on:
   push:
     tags:
-      - 'v*.*.*'   # Trigger only on tags like v1.0.0, v2.0.0c
-      
+      - 'v*.*.*'  # Triggers on tags like v1.0.0, v2.0.0, etc.
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -12,9 +12,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # needed for tags
+          fetch-depth: 0  # Required to properly detect tags
 
-      - name: Get version from tag
+      - name: Extract version from tag
         id: vars
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
@@ -23,20 +23,45 @@ jobs:
         with:
           host: 159.138.145.20
           username: chiedozie
-          key: ${{ secrets.SSH_PRIVATE_KEY }}   # add your private key to repo secrets
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          timeout: 60s
+          command_timeout: 30m
           script: |
-            set -e
+            set -e  # Fail fast on any error
+
             VERSION=${{ steps.vars.outputs.version }}
             RELEASE_DIR=/home/chiedozie/releases/v$VERSION
             CURRENT_DIR=/home/chiedozie/current
+            SOURCE_DIR=/home/chiedozie/currency-converter-api-Nest
 
+            echo "Deploying version v$VERSION"
+
+            # Create new release directory
             mkdir -p $RELEASE_DIR
-            rsync -av --delete --exclude='node_modules' /home/chiedozie/currency-converter-api-Nest/ $RELEASE_DIR/
 
+            # Sync code from current repo clone (exclude node_modules and .git)
+            rsync -av --delete \
+              --exclude='node_modules' \
+              --exclude='.git' \
+              $SOURCE_DIR/ $RELEASE_DIR/
+
+            # Go to release directory and install + build
             cd $RELEASE_DIR
-            npm install --production
+
+            # Full install (includes devDependencies for nest CLI)
+            npm install
+
+            # Build the app
             npm run build
 
+            # Optional: Remove devDependencies after build (leaner runtime)
+            npm prune --production
+
+            # Update symlink to point to new release
             ln -sfn $RELEASE_DIR $CURRENT_DIR
 
+            # Zero-downtime reload (or restart if not running)
             pm2 reload currency-converter || pm2 restart currency-converter
+
+            echo "Successfully deployed v$VERSION"
