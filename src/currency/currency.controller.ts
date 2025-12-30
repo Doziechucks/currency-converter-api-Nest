@@ -2,7 +2,7 @@ import { Controller, Post, Body, Get } from '@nestjs/common';
 import { CurrencyService } from './currency.service';
 import { ConvertDto } from './dto/convert.dto';
 import { RateDto } from './dto/rate.dto';
-
+import { formatTimestamp } from './utils/date.util';
 @Controller('api')
 export class CurrencyController {
   constructor(private readonly currencyService: CurrencyService) {}
@@ -37,8 +37,8 @@ export class CurrencyController {
   health() {
     return {
       status: 'ok',
-      version: '1.0.0',
-      timestamp: new Date().toISOString(),
+      version: '2.0.0',
+      timestamp: formatTimestamp(),
       service: 'Currency Converter API',
       uptime: process.uptime(),
     };

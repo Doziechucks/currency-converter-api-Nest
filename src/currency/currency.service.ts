@@ -2,6 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import axios from 'axios';
 import { ConvertDto } from './dto/convert.dto';
 import { RateDto } from './dto/rate.dto';
+import { formatTimestamp } from './utils/date.util';
 
 const API_BASE =
   'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1';
@@ -110,7 +111,7 @@ export class CurrencyService {
       amount: dto.amount,
       converted_amount: Number(converted.toFixed(6)),
       rate: Number(rate.toFixed(8)),
-      timestamp: new Date().toISOString(),
+      timestamp: formatTimestamp(),
     };
   }
 
@@ -146,7 +147,7 @@ export class CurrencyService {
       rate: Number(rate.toFixed(8)),
       base: from.toUpperCase(),
       to: to.toUpperCase(),
-      timestamp: new Date().toISOString(),
+      timestamp: formatTimestamp(),
     };
   }
 
@@ -160,7 +161,7 @@ export class CurrencyService {
     return {
       currencies: currencyList,
       total: currencyList.length,
-      timestamp: new Date().toISOString(),
+      timestamp: formatTimestamp(),
     };
   }
 }
