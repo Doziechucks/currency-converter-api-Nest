@@ -1,0 +1,42 @@
+name: Deploy to Server
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'   # Trigger only on tags like v1.0.0, v2.0.0c
+      
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for tags
+
+      - name: Get version from tag
+        id: vars
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 159.138.145.20
+          username: chiedozie
+          key: ${{ secrets.SSH_PRIVATE_KEY }}   # add your private key to repo secrets
+          script: |
+            set -e
+            VERSION=${{ steps.vars.outputs.version }}
+            RELEASE_DIR=/home/chiedozie/releases/v$VERSION
+            CURRENT_DIR=/home/chiedozie/current
+
+            mkdir -p $RELEASE_DIR
+            rsync -av --delete --exclude='node_modules' /home/chiedozie/currency-converter-api-Nest/ $RELEASE_DIR/
+
+            cd $RELEASE_DIR
+            npm install --production
+            npm run build
+
+            ln -sfn $RELEASE_DIR $CURRENT_DIR
+
+            pm2 reload currency-converter || pm2 restart currency-converter
