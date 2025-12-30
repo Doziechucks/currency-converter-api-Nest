@@ -1,19 +1,15 @@
 name: Deploy to Server
-
 on:
   push:
     tags:
-      - "v*.*.*"
+      - 'v*.*.*'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Extract version from tag
         id: vars
@@ -30,49 +26,62 @@ jobs:
           command_timeout: 30m
           script: |
             set -e
-
             VERSION=${{ steps.vars.outputs.version }}
+            REPO_URL="https://github.com/${{ github.repository }}.git"
             RELEASE_DIR=/home/chiedozie/releases/v$VERSION
             CURRENT_DIR=/home/chiedozie/current
-            TMP_DIR=/home/chiedozie/tmp_deploy
+            ECOSYSTEM_FILE=/home/chiedozie/ecosystem.config.js  # ← Fixed path
 
-            rm -rf $TMP_DIR
-            mkdir -p $TMP_DIR
+            echo "Deploying version v$VERSION"
+
             mkdir -p /home/chiedozie/releases
-
-            rsync -av --delete \
-              --exclude='node_modules' \
-              --exclude='.git' \
-              --exclude='dist' \
-              --exclude='.env' \
-              ./ $TMP_DIR/
-
-            rm -rf $RELEASE_DIR
-            mv $TMP_DIR $RELEASE_DIR
-
+            git clone --depth 1 --branch v$VERSION $REPO_URL $RELEASE_DIR
             cd $RELEASE_DIR
-            npm ci --prefer-offline --production=false
-            npm run build
-            npm prune --production
 
-            ln -sfn $RELEASE_DIR $CURRENT_DIR
-            cd $CURRENT_DIR
-
-            if pm2 describe currency-api > /dev/null 2>&1; then
-              pm2 delete currency-api
+            # Copy node_modules from current if exists
+            if [ -d "$CURRENT_DIR/node_modules" ]; then
+              echo "Copying existing node_modules"
+              cp -r $CURRENT_DIR/node_modules .
             fi
 
-            pm2 start ecosystem.config.js
+            # Install only if needed
+            if [ ! -d "node_modules" ] || ! npm ci --prefer-offline --production=false --dry-run > /dev/null 2>&1; then
+              echo "Installing dependencies"
+              npm ci --prefer-offline --production=false
+            else
+              echo "Dependencies up to date"
+            fi
+
+            npm run build
+
+            npm prune --production
+
+            # Update symlink
+            ln -sfn $RELEASE_DIR $CURRENT_DIR
+
+            # Copy/update fixed ecosystem file (in case of config changes)
+            cp $CURRENT_DIR/ecosystem.config.js $ECOSYSTEM_FILE  # If you keep a copy in repo
+
+            # Restart PM2 with zero-downtime reload
+            cd /home/chiedozie  # Run from fixed location
+            if pm2 describe currency-api > /dev/null 2>&1; then
+              pm2 reload $ECOSYSTEM_FILE --update-env
+            else
+              pm2 start $ECOSYSTEM_FILE
+            fi
             pm2 save
 
+            # Verify
             sleep 5
-
-            if ! pm2 describe currency-api | grep -q "online"; then
-              pm2 logs currency-api --lines 50 --nostream --err
+            if pm2 describe currency-api | grep -q "online"; then
+              echo "Deployment successful"
+            else
+              echo "Deployment failed"
+              pm2 logs currency-api --lines 50
               exit 1
             fi
 
-      - name: Verify deployment health
+      - name: Verify health endpoint
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: 159.138.145.20
@@ -80,12 +89,9 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            sleep 3
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health)
-
-            if [ "$STATUS" != "200" ]; then
-              exit 1
-            fi
+            sleep 5
+            curl -f http://localhost:3000/api/health || (pm2 logs currency-api --lines 50 && exit 1)
+            echo "Health check passed"
 
       - name: Cleanup old releases
         if: success()
@@ -98,3 +104,4 @@ jobs:
           script: |
             cd /home/chiedozie/releases
             ls -t | tail -n +4 | xargs -r rm -rf
+            echo "Cleaned up old releases (kept last 3)"
