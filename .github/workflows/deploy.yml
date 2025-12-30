@@ -3,7 +3,7 @@ name: Deploy to Server
 on:
   push:
     tags:
-      - 'v*.*.*'  # Triggers on tags like v1.0.0, v2.0.0, etc.
+      - 'v*.*.*'
 
 jobs:
   deploy:
@@ -12,7 +12,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Required to properly detect tags
+          fetch-depth: 0
 
       - name: Extract version from tag
         id: vars
@@ -28,40 +28,34 @@ jobs:
           timeout: 60s
           command_timeout: 30m
           script: |
-            set -e  # Fail fast on any error
+            set -e
 
             VERSION=${{ steps.vars.outputs.version }}
             RELEASE_DIR=/home/chiedozie/releases/v$VERSION
             CURRENT_DIR=/home/chiedozie/current
-            SOURCE_DIR=/home/chiedozie/currency-converter-api-Nest
 
             echo "Deploying version v$VERSION"
 
-            # Create new release directory
             mkdir -p $RELEASE_DIR
 
-            # Sync code from current repo clone (exclude node_modules and .git)
+            # Remove old release if exists (clean start)
+            rm -rf $RELEASE_DIR/*
+
+            # Copy fresh code from GitHub runner to server release dir
+            # (runner workspace is mounted as /github/workspace)
             rsync -av --delete \
               --exclude='node_modules' \
               --exclude='.git' \
-              $SOURCE_DIR/ $RELEASE_DIR/
+              /github/workspace/ $RELEASE_DIR/
 
-            # Go to release directory and install + build
             cd $RELEASE_DIR
 
-            # Full install (includes devDependencies for nest CLI)
             npm install
-
-            # Build the app
             npm run build
+            npm prune --production  # optional: remove dev deps after build
 
-            # Optional: Remove devDependencies after build (leaner runtime)
-            npm prune --production
-
-            # Update symlink to point to new release
             ln -sfn $RELEASE_DIR $CURRENT_DIR
 
-            # Zero-downtime reload (or restart if not running)
             pm2 reload currency-converter || pm2 restart currency-converter
 
-            echo "Successfully deployed v$VERSION"
+            echo "Deployed v$VERSION successfully"
