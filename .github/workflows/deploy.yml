@@ -33,17 +33,20 @@ jobs:
             VERSION=${{ steps.vars.outputs.version }}
             RELEASE_DIR=/home/chiedozie/releases/v$VERSION
             CURRENT_DIR=/home/chiedozie/current
+            TMP_DIR=/home/chiedozie/tmp_deploy
 
             echo "Deploying version v$VERSION"
 
-            mkdir -p $RELEASE_DIR
-            rm -rf $RELEASE_DIR/*  # clean
+            rm -rf $TMP_DIR
+            mkdir -p $TMP_DIR
 
-            # Copy flat contents of repo (handles nested repo folder)
             rsync -av --delete \
               --exclude='node_modules' \
               --exclude='.git' \
-              ./ $RELEASE_DIR/
+              ./ $TMP_DIR/
+
+            rm -rf $RELEASE_DIR
+            mv $TMP_DIR $RELEASE_DIR
 
             cd $RELEASE_DIR
 
@@ -55,4 +58,4 @@ jobs:
 
             pm2 reload currency-converter || pm2 restart currency-converter
 
-            echo "Successfully deployed v$VERSION"
+            echo "Deployed v$VERSION successfully"
