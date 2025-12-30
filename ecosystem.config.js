@@ -1,14 +1,15 @@
 module.exports = {
   apps: [{
-    name: 'currency-api',  // ← Change to this consistent name
-    script: './dist/main.js',
-    instances: 1,          // Or 'max' if you want to utilize cores (still low RAM usage possible)
-    exec_mode: 'cluster',  // ← Enable for zero-downtime reloads
+    name: 'currency-api',           // Consistent name – matches workflow
+    script: './dist/main.js',       // Relative path – works because PM2 runs from ~/current
+    instances: 1,
+    exec_mode: 'cluster',           // Enables zero-downtime reload
     autorestart: true,
     watch: false,
     max_memory_restart: '500M',
-    wait_ready: true,      // Optional: Helps PM2 wait for app to be ready during reload
-    listen_timeout: 3000,  // Optional: Gives app time to start listening
+    wait_ready: true,
+    listen_timeout: 8000,
+    kill_timeout: 3000,
     env: {
       NODE_ENV: 'production',
       PORT: 3000
@@ -18,7 +19,7 @@ module.exports = {
     log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
     merge_logs: true,
     min_uptime: '10s',
-    max_restarts: 5,
+    max_restarts: 10,
     restart_delay: 4000
   }]
 };

@@ -1,4 +1,5 @@
 name: Deploy to Server
+
 on:
   push:
     tags:
@@ -10,6 +11,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for proper tag checkout
 
       - name: Extract version from tag
         id: vars
@@ -23,65 +26,88 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           timeout: 60s
-          command_timeout: 30m
+          command_timeout: 40m
           script: |
-            set -e
+            set -e  # Exit on any error
+
             VERSION=${{ steps.vars.outputs.version }}
             REPO_URL="https://github.com/${{ github.repository }}.git"
             RELEASE_DIR=/home/chiedozie/releases/v$VERSION
             CURRENT_DIR=/home/chiedozie/current
-            ECOSYSTEM_FILE=/home/chiedozie/ecosystem.config.js  # ← Fixed path
 
+            echo "=================================="
             echo "Deploying version v$VERSION"
+            echo "=================================="
 
+            # Create releases directory if it doesn't exist
             mkdir -p /home/chiedozie/releases
+
+            # Remove old release directory if it exists (clean start for this version)
+            rm -rf $RELEASE_DIR
+
+            # Clone the specific tag into the versioned release folder
             git clone --depth 1 --branch v$VERSION $REPO_URL $RELEASE_DIR
+
+            # Enter the new release
             cd $RELEASE_DIR
 
-            # Copy node_modules from current if exists
+            # Reuse node_modules from current version if available (saves time & disk)
             if [ -d "$CURRENT_DIR/node_modules" ]; then
-              echo "Copying existing node_modules"
-              cp -r $CURRENT_DIR/node_modules .
+              echo "Copying existing node_modules from current release"
+              cp -a $CURRENT_DIR/node_modules .
             fi
 
-            # Install only if needed
+            # Install dependencies only if needed
             if [ ! -d "node_modules" ] || ! npm ci --prefer-offline --production=false --dry-run > /dev/null 2>&1; then
-              echo "Installing dependencies"
+              echo "Installing/updating dependencies"
               npm ci --prefer-offline --production=false
             else
-              echo "Dependencies up to date"
+              echo "node_modules is up to date – skipping install"
             fi
 
+            # Build the application
+            echo "Building application..."
             npm run build
 
+            # Verify build output exists
+            if [ ! -f "dist/main.js" ]; then
+              echo "ERROR: Build failed – dist/main.js not found!"
+              find dist -type f || echo "dist folder empty or missing"
+              exit 1
+            fi
+
+            # Remove dev dependencies for production
             npm prune --production
 
-            # Update symlink
+            # Update the current symlink to point to the new release
             ln -sfn $RELEASE_DIR $CURRENT_DIR
+            echo "Symlink updated: ~/current → v$VERSION"
 
-            # Copy/update fixed ecosystem file (in case of config changes)
-            cp $CURRENT_DIR/ecosystem.config.js $ECOSYSTEM_FILE  # If you keep a copy in repo
+            # === PM2 Restart (zero-downtime when possible) ===
+            cd $CURRENT_DIR
 
-            # Restart PM2 with zero-downtime reload
-            cd /home/chiedozie  # Run from fixed location
+            echo "Reloading/restarting PM2 process..."
             if pm2 describe currency-api > /dev/null 2>&1; then
-              pm2 reload $ECOSYSTEM_FILE --update-env
+              pm2 reload ecosystem.config.js --update-env
             else
-              pm2 start $ECOSYSTEM_FILE
+              pm2 start ecosystem.config.js
             fi
+
             pm2 save
 
-            # Verify
-            sleep 5
+            # Wait and verify process is online
+            sleep 8
             if pm2 describe currency-api | grep -q "online"; then
-              echo "Deployment successful"
+              echo "Deployment successful – currency-api is online"
+              pm2 status
             else
-              echo "Deployment failed"
-              pm2 logs currency-api --lines 50
+              echo "Deployment failed – process not online"
+              pm2 logs currency-api --lines 50 --err
               exit 1
             fi
 
       - name: Verify health endpoint
+        if: success()
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: 159.138.145.20
@@ -90,8 +116,14 @@ jobs:
           port: 22
           script: |
             sleep 5
-            curl -f http://localhost:3000/api/health || (pm2 logs currency-api --lines 50 && exit 1)
-            echo "Health check passed"
+            echo "Checking health endpoint..."
+            if curl -f http://localhost:3000/api/health; then
+              echo "Health check passed"
+            else
+              echo "Health check failed"
+              pm2 logs currency-api --lines 30 --err
+              exit 1
+            fi
 
       - name: Cleanup old releases
         if: success()
@@ -102,6 +134,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
+            echo "Cleaning up old releases (keeping the latest 3)"
             cd /home/chiedozie/releases
             ls -t | tail -n +4 | xargs -r rm -rf
-            echo "Cleaned up old releases (kept last 3)"
+            echo "Cleanup complete"
