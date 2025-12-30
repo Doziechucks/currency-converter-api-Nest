@@ -14,7 +14,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version from tag
+      - name: Extract version
         id: vars
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
@@ -33,16 +33,17 @@ jobs:
             VERSION=${{ steps.vars.outputs.version }}
             RELEASE_DIR=/home/chiedozie/releases/v$VERSION
             CURRENT_DIR=/home/chiedozie/current
-            TMP_DIR=/home/chiedozie/tmp_deploy
+            TMP_DIR=/home/chiedozie/tmp_deploy_$VERSION
 
-            echo "Deploying version v$VERSION"
+            echo "Deploying v$VERSION"
 
             rm -rf $TMP_DIR
             mkdir -p $TMP_DIR
 
-            rsync -av --delete \
+            rsync -a --delete \
               --exclude='node_modules' \
               --exclude='.git' \
+              --exclude='dist' \
               ./ $TMP_DIR/
 
             rm -rf $RELEASE_DIR
@@ -50,12 +51,29 @@ jobs:
 
             cd $RELEASE_DIR
 
-            npm install
+            npm ci
             npm run build
             npm prune --production
 
             ln -sfn $RELEASE_DIR $CURRENT_DIR
 
-            pm2 reload currency-converter || pm2 restart currency-converter
+            cd $CURRENT_DIR
 
-            echo "Deployed v$VERSION successfully"
+            if pm2 describe currency-converter > /dev/null 2>&1; then
+              pm2 reload ecosystem.config.js --update-env
+            else
+              pm2 start ecosystem.config.js
+            fi
+
+            pm2 save
+
+            echo "Waiting for app to stabilize..."
+            sleep 8
+
+            if pm2 describe currency-converter | grep -q "online"; then
+              echo "Deploy successful! v$VERSION is live"
+            else
+              echo "Deploy failed - app not online"
+              pm2 logs currency-converter --lines 50
+              exit 1
+            fi
