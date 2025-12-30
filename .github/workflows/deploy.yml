@@ -37,21 +37,13 @@ jobs:
             echo "Deploying version v$VERSION"
 
             mkdir -p $RELEASE_DIR
-            rm -rf $RELEASE_DIR/*  # clean slate
+            rm -rf $RELEASE_DIR/*  # clean
 
-            # Robust rsync: try common paths used by appleboy/ssh-action
+            # Copy flat contents of repo (handles nested repo folder)
             rsync -av --delete \
               --exclude='node_modules' \
               --exclude='.git' \
-              ./* $RELEASE_DIR/ || \
-            rsync -av --delete \
-              --exclude='node_modules' \
-              --exclude='.git' \
-              /github/workspace/* $RELEASE_DIR/ || \
-            rsync -av --delete \
-              --exclude='node_modules' \
-              --exclude='.git' \
-              /github/workspace/ $RELEASE_DIR/
+              ./ $RELEASE_DIR/
 
             cd $RELEASE_DIR
 
