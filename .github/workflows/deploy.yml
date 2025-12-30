@@ -37,12 +37,17 @@ jobs:
             echo "Deploying version v$VERSION"
 
             mkdir -p $RELEASE_DIR
+            rm -rf $RELEASE_DIR/*  # clean slate
 
-            # Remove old release if exists (clean start)
-            rm -rf $RELEASE_DIR/*
-
-            # Copy fresh code from GitHub runner to server release dir
-            # (runner workspace is mounted as /github/workspace)
+            # Robust rsync: try common paths used by appleboy/ssh-action
+            rsync -av --delete \
+              --exclude='node_modules' \
+              --exclude='.git' \
+              ./* $RELEASE_DIR/ || \
+            rsync -av --delete \
+              --exclude='node_modules' \
+              --exclude='.git' \
+              /github/workspace/* $RELEASE_DIR/ || \
             rsync -av --delete \
               --exclude='node_modules' \
               --exclude='.git' \
@@ -52,10 +57,10 @@ jobs:
 
             npm install
             npm run build
-            npm prune --production  # optional: remove dev deps after build
+            npm prune --production
 
             ln -sfn $RELEASE_DIR $CURRENT_DIR
 
             pm2 reload currency-converter || pm2 restart currency-converter
 
-            echo "Deployed v$VERSION successfully"
+            echo "Successfully deployed v$VERSION"
